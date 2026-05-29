@@ -12,6 +12,11 @@ from typing import Any
 import structlog
 
 from aegra_api.core.active_runs import active_runs
+from aegra_api.observability.broker_metrics import (
+    record_consumer_connected,
+    record_consumer_disconnected,
+    set_active_consumers,
+)
 from aegra_api.services.base_broker import BaseBrokerManager, BaseRunBroker
 from aegra_api.settings import settings
 from aegra_api.utils import generate_event_id
@@ -32,6 +37,8 @@ class RunBroker(BaseRunBroker):
         self.finished = asyncio.Event()
         self._replay_buffer: list[tuple[str, Any]] = []
         self._created_at = asyncio.get_running_loop().time()
+        self._active_consumers: int = 0
+        self._tracking_enabled: bool = settings.redis.ENABLE_CONSUMER_TRACKING
 
     async def put(self, event_id: str, payload: Any, *, resumable: bool = True) -> None:
         if self.finished.is_set():
@@ -48,17 +55,46 @@ class RunBroker(BaseRunBroker):
             self.mark_finished()
 
     async def aiter(self) -> AsyncIterator[tuple[str, Any]]:
-        while True:
-            try:
-                event_id, payload = await asyncio.wait_for(self.queue.get(), timeout=0.1)
-                yield event_id, payload
+        self.on_consumer_connected()
+        try:
+            while True:
+                try:
+                    event_id, payload = await asyncio.wait_for(self.queue.get(), timeout=0.1)
+                    yield event_id, payload
 
-                if isinstance(payload, tuple) and len(payload) >= 1 and payload[0] == "end":
-                    break
-            except TimeoutError:
-                if self.finished.is_set() and self.queue.empty():
-                    break
-                continue
+                    if isinstance(payload, tuple) and len(payload) >= 1 and payload[0] == "end":
+                        break
+                except TimeoutError:
+                    if self.finished.is_set() and self.queue.empty():
+                        break
+                    continue
+        finally:
+            self.on_consumer_disconnected()
+
+    def has_active_consumers(self) -> bool:
+        if not self._tracking_enabled:
+            return True
+        return self._active_consumers > 0
+
+    def on_consumer_connected(self) -> None:
+        if not self._tracking_enabled:
+            return
+        self._active_consumers += 1
+        logger.debug(f"Consumer connected to broker for run {self.run_id}, total: {self._active_consumers}")
+
+        record_consumer_connected("in_memory")
+        set_active_consumers("in_memory", self._active_consumers)
+
+    def on_consumer_disconnected(self) -> None:
+        if not self._tracking_enabled:
+            return
+        self._active_consumers -= 1
+        if self._active_consumers < 0:
+            self._active_consumers = 0
+        logger.debug(f"Consumer disconnected from broker for run {self.run_id}, total: {self._active_consumers}")
+
+        record_consumer_disconnected("in_memory")
+        set_active_consumers("in_memory", self._active_consumers)
 
     async def replay(self, last_event_id: str | None) -> list[tuple[str, Any]]:
         if not self._replay_buffer:

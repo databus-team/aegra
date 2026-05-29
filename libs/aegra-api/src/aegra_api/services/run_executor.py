@@ -15,6 +15,7 @@ from aegra_api.core.active_runs import active_runs
 from aegra_api.core.auth_ctx import with_auth_ctx
 from aegra_api.core.redis_manager import redis_manager
 from aegra_api.models.run_job import RunJob
+from aegra_api.observability.broker_metrics import record_replay_buffer_skipped
 from aegra_api.services.broker import broker_manager
 from aegra_api.services.graph_streaming import stream_graph_events
 from aegra_api.services.langgraph_service import create_run_config, get_langgraph_service
@@ -155,7 +156,13 @@ async def _stream_graph(job: RunJob) -> _GraphResult:
             on_task_result=lambda _: None,
         ):
             event_id = await broker_manager.allocate_event_id(run_id)
-            await streaming_service.put_to_broker(run_id, event_id, (event_type, event_data))
+            broker = broker_manager.get_broker(run_id)
+            has_consumers = broker is not None and broker.has_active_consumers()
+            await streaming_service.put_to_broker(run_id, event_id, (event_type, event_data), resumable=has_consumers)
+
+            if not has_consumers:
+                broker_type = "redis" if settings.redis.REDIS_BROKER_ENABLED else "in_memory"
+                record_replay_buffer_skipped(broker_type)
 
             if isinstance(event_data, dict) and "__interrupt__" in event_data:
                 result.has_interrupt = True

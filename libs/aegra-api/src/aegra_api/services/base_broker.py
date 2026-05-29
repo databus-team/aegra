@@ -46,6 +46,22 @@ class BaseRunBroker(ABC):
     def is_finished(self) -> bool:
         """Check if this broker is finished."""
 
+    @abstractmethod
+    def has_active_consumers(self) -> bool:
+        """Check if there are any active consumers connected.
+
+        Returns:
+            True if there are active consumers, False otherwise.
+        """
+
+    @abstractmethod
+    def on_consumer_connected(self) -> None:
+        """Called when a new consumer connects."""
+
+    @abstractmethod
+    def on_consumer_disconnected(self) -> None:
+        """Called when a consumer disconnects."""
+
 
 class BaseBrokerManager(ABC):
     """Abstract base class for managing multiple RunBroker instances"""

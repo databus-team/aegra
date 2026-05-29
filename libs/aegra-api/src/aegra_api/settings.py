@@ -248,6 +248,11 @@ class RedisSettings(EnvBase):
     REDIS_CHANNEL_PREFIX: str = "aegra:run:"
     REDIS_MAX_CONNECTIONS: int = 250
 
+    # Consumer tracking for SSE streaming optimization.
+    # When enabled, the broker tracks active consumers and skips replay buffer
+    # persistence when no consumers are connected, reducing Redis memory usage.
+    ENABLE_CONSUMER_TRACKING: bool = True
+
 
 class WorkerSettings(EnvBase):
     """Worker configuration for background graph execution.

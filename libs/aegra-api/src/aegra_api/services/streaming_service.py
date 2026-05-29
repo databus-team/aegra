@@ -43,11 +43,13 @@ class StreamingService:
         run_id: str,
         event_id: str,
         raw_event: Any,
+        *,
+        resumable: bool = True,
     ) -> None:
         """Put an event into the run's broker for live consumers and replay storage."""
         broker = broker_manager.get_or_create_broker(run_id)
         self._next_event_counter(run_id, event_id)
-        await broker.put(event_id, raw_event)
+        await broker.put(event_id, raw_event, resumable=resumable)
 
     async def signal_run_cancelled(self, run_id: str) -> None:
         """Signal that a run was cancelled.
